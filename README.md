@@ -53,7 +53,7 @@ Class distributions, text length stats, label imbalance across Tasks A/B/C. Pure
 Off by default in `src/train.py` (`--augment none`). This section runs `eda_augment` on 5 minority-class Task C examples and prints original-vs-synthetic pairs side by side, so you can inspect what it actually produces before deciding to use it for real, and have concrete examples for the write-up's justification. The full augmentation (applied to the whole train split, not just this preview) happens inside `02_training.ipynb`.
 
 ### 4. Training — `02_training.ipynb` (runs `src/train.py`)
-Fine-tunes all 6 required classifiers: BERT and RoBERTa on each of Tasks A, B, C. Open in Colab with a GPU runtime, run top to bottom. Each run saves a checkpoint to `outputs/best_model_task{A,B,C}/` and a `results.json` with dev/test macro-F1 and the full classification report.
+Fine-tunes all 6 required classifiers: BERT and RoBERTa on each of Tasks A, B, C. Open in Colab with a GPU runtime, run top to bottom. Each run saves a checkpoint to `outputs/best_model_task{A,B,C}_<model>/` (the model name is part of the folder, so RoBERTa and BERT runs for the same task don't overwrite each other) and a `results.json` with the hyperparameters used plus dev/test macro-F1 and the full classification report. Optional hyperparameter-sweep runs (`--run_name`) get their own sub-folder too, e.g. `outputs/best_model_taskA_roberta-base_lr3e-5/`.
 
 Command form, if running manually instead of via the notebook:
 ```bash
@@ -70,7 +70,7 @@ Augmentation (`src/augment.py`) is off by default, matching the proposal's metho
 Colab sessions are ephemeral — the notebook's last cell backs up `outputs/` to Google Drive. Do this before the runtime disconnects.
 
 ### 5. Explainability — `03_explainability.ipynb` (runs `src/explain.py`)
-Run after training, using the checkpoints in `outputs/`. Produces LIME explanations per prediction, SHAP comparative attributions, sufficiency/comprehensiveness faithfulness scores, and the Task C gender-neutral-term bias audit. This is interactive (visualizations render best in a notebook), so it's not meant to be a pure CLI run, though `python -m src.explain --task A --checkpoint outputs/best_model_taskA` works for a quick text-only check.
+Run after training, using the checkpoints in `outputs/`. Produces LIME explanations per prediction, SHAP comparative attributions, sufficiency/comprehensiveness faithfulness scores, and the Task C gender-neutral-term bias audit. This is interactive (visualizations render best in a notebook), so it's not meant to be a pure CLI run, though `python -m src.explain --task A --checkpoint outputs/best_model_taskA_roberta-base` works for a quick text-only check.
 
 ### 6. Results summary — `04_results_summary.ipynb`
 Reads every `outputs/best_model_task*/results.json` and builds one comparison table (BERT vs RoBERTa, across Tasks A/B/C), plus lines it up against the published EDOS baselines (Most Frequent, DistilBERT, DeBERTa-v3, Mahmoudi, Goldzycher, Best SemEval System) for the write-up.

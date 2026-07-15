@@ -1,0 +1,32 @@
+# Large unlabelled corpora (~90MB each) — publicly available from the
+# official EDOS repo (github.com/rewire-online/edos) if needed again,
+# and not used by src/train.py (which only needs the labelled data).
+data/gab_1M_unlabelled.csv
+data/reddit_1M_unlabelled.csv
+
+# Research papers — copyrighted third-party work, not ours to redistribute
+# on a public repo. Cite them in README/references instead.
+*.pdf
+
+# Model checkpoints / training artifacts (large, regenerable by re-running
+# src/train.py)
+outputs/*
+!outputs/.gitkeep
+
+# Preprocessed CSV splits (regenerable from data/edos_labelled_aggregated.csv
+# via src.data.build_task_frame + get_splits -- see save_task_splits)
+data/processed/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
