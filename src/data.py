@@ -1,22 +1,15 @@
 """
 Data loading and preprocessing utilities for the EDOS sexism detection dataset.
 
-Preprocessing choices follow a "minimal preprocessing" approach appropriate
-for fine-tuning transformer encoders (RoBERTa/BERT/DeBERTa), as opposed to
-the heavier classical-NLP pipeline (lowercasing, lemmatization, stopword
-removal) used for the CNN+BERT ensemble in Hadi et al. (Appl. Sci. 2024,
-14, 8620):
+Preprocessing choices follow a minimal preprocessing approach appropriate for fine-tuning transformer encoders 
+(RoBERTa/BERT/DeBERTa), as opposed to the heavier classical-NLP pipeline (lowercasing, lemmatization, stopword removal)
 
-  - No lowercasing / lemmatization / stopword removal. The model's own
-    subword tokenizer handles morphology, and RoBERTa's tokenizer is
-    case-sensitive, so lowercasing throws away information the model could
-    otherwise use (and it also hurts LIME/SHAP explanations, which should
-    explain the model on text it actually sees).
-  - URLs and usernames are already normalized to [URL] / [USER] tokens by
-    the dataset creators (Kirk et al., SemEval-2023 Task 10), so no further
-    cleaning is applied there.
-  - Emojis and punctuation are kept, since they carry sentiment signal
-    relevant to sexism/hate-speech detection.
+  - No lowercasing / lemmatization / stopword removal. The model's own subword tokenizer handles morphology, and RoBERTa's tokenizer is case-sensitive, 
+  so lowercasing throws away information the model could otherwise use (and it also hurts LIME/SHAP explanations, which shouldexplain the model on text it actually sees).
+  
+  - URLs and usernames are already normalized to [URL] / [USER] tokens by the dataset creators (Kirk et al., SemEval-2023 Task 10), so no further cleaning is applied there.
+    
+  - Emojis and punctuation are kept, since they carry sentiment signal relevant to sexism/hate-speech detection.
 """
 
 from __future__ import annotations
@@ -27,7 +20,6 @@ import torch
 from sklearn.utils.class_weight import compute_class_weight
 from torch.utils.data import Dataset
 
-# Label sets, matching the official EDOS task definitions (Kirk et al., 2023).
 TASK_LABELS = {
     "A": ["not sexist", "sexist"],
     "B": [
@@ -67,8 +59,7 @@ def load_raw(csv_path: str) -> pd.DataFrame:
 
 def build_task_frame(df: pd.DataFrame, task: str) -> pd.DataFrame:
     """
-    Slice the full dataframe down to the rows and label column relevant to a
-    given EDOS subtask, matching the official task definitions:
+    Slice the full dataframe down to the rows and label column relevant to a given EDOS subtask, matching the official task definitions:
       - Task A (binary, 2-way):  all rows, sexist vs not sexist.
       - Task B (category, 4-way): only rows where label_sexist == 'sexist'.
       - Task C (vector, 11-way):  only rows where label_sexist == 'sexist'.
@@ -91,40 +82,16 @@ def build_task_frame(df: pd.DataFrame, task: str) -> pd.DataFrame:
 
 
 def get_splits(task_df: pd.DataFrame):
-    """Use the dataset's own train/dev/test split (14000/2000/4000 rows in
-    the full aggregated file) rather than re-shuffling, so results stay
+    """Use the dataset's own train/dev/test split (14000/2000/4000 rows in the full aggregated file) rather than re-shuffling, so results stay 
     comparable to the SemEval-2023 Task 10 leaderboard."""
     train = task_df[task_df["split"] == "train"].reset_index(drop=True)
     dev = task_df[task_df["split"] == "dev"].reset_index(drop=True)
     test = task_df[task_df["split"] == "test"].reset_index(drop=True)
     return train, dev, test
 
-
-def save_task_splits(train_df: pd.DataFrame, dev_df: pd.DataFrame, test_df: pd.DataFrame, task: str, out_dir: str = "data/processed") -> None:
-    """Persist a task's train/dev/test splits to CSV under data/processed/.
-
-    Not required by train.py or explain.py -- both rebuild these splits from
-    the raw CSV on the fly (build_task_frame + get_splits), which is fast
-    and deterministic (no randomness in the slicing), so this isn't a
-    dependency anywhere else in the pipeline. It exists purely so you have
-    a saved, inspectable copy of the preprocessed data on disk -- useful for
-    a quick `head` in Terminal, sharing with a supervisor, or referencing in
-    the write-up, without needing to re-run any code to regenerate it.
-    """
-    import os
-
-    os.makedirs(out_dir, exist_ok=True)
-    train_df.to_csv(os.path.join(out_dir, f"task_{task}_train.csv"), index=False)
-    dev_df.to_csv(os.path.join(out_dir, f"task_{task}_dev.csv"), index=False)
-    test_df.to_csv(os.path.join(out_dir, f"task_{task}_test.csv"), index=False)
-    print(f"Saved task {task} splits to {out_dir}/ ({len(train_df)} train, {len(dev_df)} dev, {len(test_df)} test)")
-
-
 def compute_weights(train_df: pd.DataFrame, num_labels: int) -> torch.Tensor:
-    """Inverse-frequency class weights for a weighted CrossEntropyLoss, to
-    address the class imbalance documented across the EDOS literature (e.g.
-    Task A is ~76/24 not-sexist/sexist; Task C's smallest class has under
-    100 training examples)."""
+    """Inverse-frequency class weights for a weighted CrossEntropyLoss, to address the class imbalance documented across the EDOS literature (e.g.
+    Task A is ~76/24 not-sexist/sexist; Task C's smallest class has under 100 training examples)."""
     classes = np.arange(num_labels)
     weights = compute_class_weight(
         class_weight="balanced", classes=classes, y=train_df["label_id"].values
@@ -133,10 +100,8 @@ def compute_weights(train_df: pd.DataFrame, num_labels: int) -> torch.Tensor:
 
 
 class SexismDataset(Dataset):
-    """Tokenizes text on the fly. max_length=128 comfortably covers this
-    dataset (EDOS posts average ~23 words, max ~58 words), well under the
-    512-token budgets used in prior work, which reduces training/inference
-    time without truncating any real posts."""
+    """Tokenizes text on the fly. max_length=128 comfortably covers this dataset (EDOS posts average ~23 words, max ~58 words), well under the
+    512-token budgets used in prior work, which reduces training/inference time without truncating any real posts."""
 
     def __init__(self, texts, labels, tokenizer, max_length: int = 128):
         self.texts = list(texts)
