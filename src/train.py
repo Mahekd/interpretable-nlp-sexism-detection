@@ -1,8 +1,7 @@
 """
-Fine-tune a transformer encoder on an EDOS subtask (A, B, or C).
+Fine-tuneing a transformer encoders on an EDOS subtask (A, B, or C).
 
-Default hyperparameters follow standard practice for RoBERTa-base
-classification fine-tuning, consistent with the ranges reported in the
+Default hyperparameters follow standard practice for RoBERTa-base classification fine-tuning, consistent with the ranges reported in the
 EDOS literature:
   - AdamW, lr=2e-5, weight_decay=0.01, linear warmup (ratio 0.06)
   - batch_size=16, max_length=128 (EDOS posts average ~23 words)
@@ -10,22 +9,18 @@ EDOS literature:
   - Class-weighted CrossEntropyLoss by default, to address label imbalance
     (disable with --no_class_weights)
 
-Works with both BERT and RoBERTa checkpoints (and any other
-AutoModelForSequenceClassification-compatible model) -- just change
+Works with both BERT and RoBERTa checkpoints, and any other AutoModelForSequenceClassification-compatible model, just change
 --model_name, e.g. bert-base-uncased or roberta-base.
 
-RoBERTa-large was used in several published EDOS systems (e.g. lr=6e-6,
-30 epochs -- see the ACL-2025 DDA/CSE ensemble paper), but a base-sized
-model is the better starting point for this project: it is far cheaper to
-run LIME/SHAP over (which needs hundreds of forward passes per
-explanation) and is faster to iterate on. Swap --model_name to scale up
-later.
+RoBERTa-large was used in several published EDOS systems (for example lr=6e-6, 30 epochs, see the ACL-2025 DDA/CSE ensemble paper), but a
+base-sized model is the better starting point for this project: it is far cheaper to run LIME/SHAP over (which needs hundreds of forward passes per
+explanation) and is faster to iterate on. Swap --model_name to scale up later.
 
 Usage:
     python -m src.train --task A --model_name roberta-base
     python -m src.train --task A --model_name bert-base-uncased
     python -m src.train --task B --model_name roberta-large --lr 6e-6 --epochs 30
-    python -m src.train --task C --data_path /content/drive/MyDrive/EDOS_DATA/edos_labelled_aggregated.csv
+
 """
 
 from __future__ import annotations
@@ -93,9 +88,9 @@ def main():
     parser.add_argument("--no_class_weights", action="store_true")
     parser.add_argument(
         "--augment",
-        choices=["none", "eda", "backtranslate"],
+        choices=["none", "backtranslate"],
         default="none",
-        help="optional train-split-only augmentation (see src/augment.py); off by default per proposal Section IV.B",
+        help="optional train-split-only back-translation augmentation (see src/augment.py); off by default per proposal Section IV.B",
     )
     parser.add_argument(
         "--augment_classes",
@@ -103,7 +98,6 @@ def main():
         help="comma-separated label ids to augment, e.g. '0,3'. If --augment is set but this is omitted, "
         "auto-selects classes with below-median training-set frequency.",
     )
-    parser.add_argument("--augment_n", type=int, default=1, help="augmented variants per source example (eda only)")
     parser.add_argument(
         "--pivot_lang",
         default="nl",
@@ -115,7 +109,7 @@ def main():
         "--run_name",
         default=None,
         help="optional tag for hyperparameter-sweep runs, e.g. --run_name lr2e-5. "
-        "Keeps this run's checkpoint + results.json in its own folder "
+        "Keeps this run's checkpoint and results.json in its own folder "
         "(outputs/best_model_task{A,B,C}_<model>_<run_name>/) instead of overwriting "
         "the default outputs/best_model_task{A,B,C}_<model>/. Leave unset for your "
         "main, final run per task/model.",
@@ -134,23 +128,18 @@ def main():
     train_df, dev_df, test_df = get_splits(task_df)
     print(f"Task {args.task}: train={len(train_df)} dev={len(dev_df)} test={len(test_df)} | labels={labels}")
 
-    if args.augment != "none":
+    if args.augment == "backtranslate":
+        from src.augment import back_translate
+
         if args.augment_classes:
             target_classes = [int(c) for c in args.augment_classes.split(",")]
         else:
             counts = train_df["label_id"].value_counts()
             target_classes = counts[counts < counts.median()].index.tolist()
-        print(f"Augmenting classes {target_classes} with method={args.augment} (train split only)")
-        if args.augment == "eda":
-            from src.augment import eda_augment
-
-            train_df = eda_augment(train_df, target_classes, n_aug=args.augment_n, seed=args.seed)
-        else:
-            from src.augment import back_translate
-
-            train_df = back_translate(
-                train_df, target_classes, pivot_lang=args.pivot_lang, device=str(device)
-            )
+        print(f"Augmenting classes {target_classes} with back-translation (train split only)")
+        train_df = back_translate(
+            train_df, target_classes, pivot_lang=args.pivot_lang, device=str(device)
+        )
         print(f"Train size after augmentation: {len(train_df)}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
