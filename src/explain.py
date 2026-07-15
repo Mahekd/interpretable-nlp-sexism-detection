@@ -8,8 +8,8 @@ Section IV.E of the project proposal.
   - SHAP (`explain_shap`, `bias_audit`) is applied comparatively on a
     sample of the test set, to validate LIME's attributions and to check
     for gender-neutral tokens receiving disproportionate attribution
-    weight -- the audit method used by Muntasir & Noor (2024) to uncover
-    gender bias invisible to standard accuracy/F1 metrics.
+    weight, using the audit method from Muntasir & Noor (2024), which
+    uncovers gender bias invisible to standard accuracy/F1 metrics.
   - Faithfulness (`comprehensiveness`, `sufficiency`, `evaluate_faithfulness`)
     implements the ERASER-style metrics (DeYoung et al., 2020) cited via
     Bang et al. (2022): comprehensiveness measures how much confidence
@@ -22,8 +22,8 @@ Usage:
     python -m src.explain --task C --checkpoint outputs/best_model_taskC_roberta-base --n_samples 30
 
 Note: this module needs torch/transformers/lime/shap installed and a
-fine-tuned checkpoint produced by src/train.py (i.e. run this after
-training, on a machine with those packages -- Colab or wherever training
+fine-tuned checkpoint produced by src/train.py. Run this after training,
+on a machine with those packages installed (Colab or wherever training
 ran). The SHAP `Explanation.values`/`.data` shape used in `bias_audit`
 matches recent shap versions (Text masker + output_names); if you're on an
 older shap release, sanity-check the shapes before trusting the audit
@@ -41,7 +41,7 @@ from src.data import TASK_LABELS
 
 class ModelWrapper:
     """Wraps a fine-tuned checkpoint with a predict_proba(texts) -> np.ndarray
-    interface -- the shape both LIME and SHAP expect."""
+    interface, the shape both LIME and SHAP expect."""
 
     def __init__(self, checkpoint_dir: str, device=None, max_length: int = 128):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -173,14 +173,14 @@ def evaluate_faithfulness(texts, wrapper: ModelWrapper, labels, k: int = 5, num_
 
 
 # ---------------------------------------------------------------------------
-# Task C bias audit (Muntasir & Noor, 2024): do gender-neutral terms receive
+# Task C bias audit: do gender-neutral terms receive
 # disproportionate SHAP attribution, independent of actual sexist content?
 # ---------------------------------------------------------------------------
 
 # Gender-related but not inherently sexist in isolation. A faithful
-# classifier should not assign these large attribution on their own --
-# high attribution here suggests the model has learned a spurious
-# gender <-> sexism correlation rather than genuine sexist content.
+# classifier should not assign these large attribution on their own. High
+# attribution here suggests the model has learned a spurious gender to
+# sexism correlation rather than genuine sexist content.
 GENDER_NEUTRAL_TERMS = [
     "woman", "women", "girl", "girls", "she", "her", "hers",
     "man", "men", "boy", "boys", "he", "him", "his",
@@ -191,7 +191,7 @@ GENDER_NEUTRAL_TERMS = [
 def bias_audit(texts, shap_values, terms=GENDER_NEUTRAL_TERMS):
     """Aggregates mean absolute SHAP attribution per gender-neutral term
     across a shap.Explanation (from explain_shap). Sort the returned rows
-    by mean_abs_shap descending -- terms near the top are candidates for
+    by mean_abs_shap descending; terms near the top are candidates for
     the qualitative bias discussion in the write-up."""
     term_scores = {t: [] for t in terms}
     for i, _ in enumerate(texts):
