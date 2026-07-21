@@ -16,6 +16,8 @@ Section IV.E of the project proposal.
     drops when the top-k explained tokens are removed (higher = more
     faithful explanation); sufficiency measures how much confidence drops
     when ONLY the top-k tokens are kept (lower = more faithful).
+  - `copy_best_checkpoints` restores only the best checkpoint per
+    (task, model) from a Drive backup, skipping sweep/augmented runs.
 
 Usage:
     python -m src.explain --task A --checkpoint outputs/best_model_taskA_roberta-base
@@ -65,6 +67,59 @@ class ModelWrapper:
                 logits = self.model(**enc).logits
                 probs.append(torch.softmax(logits, dim=-1).cpu().numpy())
         return np.concatenate(probs, axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint selection
+# ---------------------------------------------------------------------------
+
+def copy_best_checkpoints(
+    backup_dir: str,
+    output_dir: str = "outputs",
+    tasks=("A", "B", "C"),
+    models=("roberta-base", "bert-base-uncased"),
+):
+    """Copies only the best checkpoint per (task, model) from backup_dir
+    into output_dir: the run with run_name == "default" and
+    augment == "none" in its results.json (ties broken by dev_macro_f1).
+    Skips sweep runs and Task B's augmented variants.
+
+    Returns: dict {(task, model): {"dir": ..., "dev_macro_f1": ...}}
+    """
+    import glob
+    import json
+    import os
+    import shutil
+
+    candidates = {}
+    for path in glob.glob(os.path.join(backup_dir, "best_model_task*", "results.json")):
+        with open(path) as f:
+            r = json.load(f)
+        task, model = r.get("task"), r.get("model_name")
+        if task not in tasks or model not in models:
+            continue
+        if (r.get("run_name") or "default") != "default" or (r.get("augment") or "none") != "none":
+            continue
+        key = (task, model)
+        folder = os.path.basename(os.path.dirname(path))
+        f1 = r.get("dev_macro_f1", float("-inf"))
+        if key not in candidates or f1 > candidates[key]["dev_macro_f1"]:
+            candidates[key] = {"dir": folder, "dev_macro_f1": f1}
+
+    os.makedirs(output_dir, exist_ok=True)
+    for (task, model), info in sorted(candidates.items()):
+        dst = os.path.join(output_dir, info["dir"])
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(os.path.join(backup_dir, info["dir"]), dst)
+        print(f"Task {task} / {model}: copied {info['dir']}  (dev macro-F1={info['dev_macro_f1']:.4f})")
+
+    for task in tasks:
+        for model in models:
+            if (task, model) not in candidates:
+                print(f"WARNING: no checkpoint found for task {task} / {model}")
+
+    return candidates
 
 
 # ---------------------------------------------------------------------------
