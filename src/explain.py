@@ -10,6 +10,9 @@ Section IV.E of the project proposal.
     for gender-neutral tokens receiving disproportionate attribution
     weight, using the audit method from Muntasir & Noor (2024), which
     uncovers gender bias invisible to standard accuracy/F1 metrics.
+    `bias_control_comparison` supplies the missing baseline: a bootstrap
+    comparison of gender-term attribution against ordinary content-word
+    attribution, so "disproportionate" is a p-value, not just a ranking.
   - Faithfulness (`comprehensiveness`, `sufficiency`, `evaluate_faithfulness`)
     implements the ERASER-style metrics (DeYoung et al., 2020) cited via
     Bang et al. (2022): comprehensiveness measures how much confidence
@@ -272,6 +275,73 @@ def bias_audit(texts, shap_values, terms=GENDER_NEUTRAL_TERMS):
     return rows
 
 
+# Short function words excluded from the control pool below -- these carry
+# almost no semantic content on their own, so including them would understate
+# the "ordinary token" baseline and bias the comparison in favor of finding
+# a gender effect.
+_CONTROL_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "am",
+    "to", "of", "in", "on", "at", "by", "for", "with", "as", "it", "its",
+    "this", "that", "these", "those", "i", "you", "we", "they", "them",
+    "and", "or", "but", "so", "if", "not", "no", "do", "does", "did",
+}
+
+
+def bias_control_comparison(texts, shap_values, terms=GENDER_NEUTRAL_TERMS, seed=42, n_bootstrap=2000):
+    """The missing baseline for `bias_audit`: a ranked list of gender-term
+    attributions shows those terms get *some* weight, but not whether that
+    weight is disproportionate relative to an ordinary token. This compares
+    the mean |SHAP| of `terms` against a bootstrap-resampled control pool of
+    every other content word seen in `texts` (stopwords and punctuation-only
+    tokens excluded), matched to the same sample size as the gender-term
+    observations on each bootstrap draw.
+
+    Returns a dict with gender_mean_abs_shap, control_mean_abs_shap, their
+    difference, a 95% bootstrap CI for the control mean, and
+    p_value_gender_not_higher: the fraction of bootstrap control-sample means
+    that meet or exceed the observed gender-term mean. A small p-value here
+    is the actual evidence for "gender-neutral terms receive disproportionate
+    attribution," not just their raw ranking. Returns None if either the
+    gender-term or control pool is empty for this sample.
+    """
+    rng = np.random.default_rng(seed)
+    gender_scores, control_pool = [], []
+    for i, _ in enumerate(texts):
+        words = shap_values.data[i]
+        values = shap_values.values[i]  # shape: (n_tokens, n_classes)
+        for j, w in enumerate(words):
+            token = str(w).strip().lower()
+            if not token or not token.isalpha():
+                continue
+            score = float(np.abs(values[j]).mean())
+            if token in terms:
+                gender_scores.append(score)
+            elif token not in _CONTROL_STOPWORDS:
+                control_pool.append(score)
+
+    if not gender_scores or not control_pool:
+        return None
+
+    gender_scores = np.array(gender_scores)
+    control_pool = np.array(control_pool)
+    gender_mean = float(gender_scores.mean())
+
+    boot_means = np.array(
+        [rng.choice(control_pool, size=len(gender_scores), replace=True).mean() for _ in range(n_bootstrap)]
+    )
+    ci_low, ci_high = np.percentile(boot_means, [2.5, 97.5])
+
+    return {
+        "gender_mean_abs_shap": gender_mean,
+        "gender_n": int(len(gender_scores)),
+        "control_mean_abs_shap": float(control_pool.mean()),
+        "control_n": int(len(control_pool)),
+        "observed_diff": float(gender_mean - control_pool.mean()),
+        "control_bootstrap_ci95": (float(ci_low), float(ci_high)),
+        "p_value_gender_not_higher": float((boot_means >= gender_mean).mean()),
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI: explain a sample of the test set for one task/checkpoint
 # ---------------------------------------------------------------------------
@@ -320,6 +390,15 @@ def main():
         rows = bias_audit(sample_texts, shap_values)
         for r in rows[:10]:
             print(r)
+
+        control = bias_control_comparison(sample_texts, shap_values, seed=args.seed)
+        if control:
+            print("\n--- Bias audit control comparison ---")
+            print(f"Gender-term mean |SHAP|:  {control['gender_mean_abs_shap']:.4f} (n={control['gender_n']})")
+            print(f"Control-token mean |SHAP|: {control['control_mean_abs_shap']:.4f} (n={control['control_n']})")
+            print(f"Observed difference:      {control['observed_diff']:.4f}")
+            print(f"Control 95% bootstrap CI: {control['control_bootstrap_ci95']}")
+            print(f"p-value (gender not higher than control): {control['p_value_gender_not_higher']:.4f}")
 
 
 if __name__ == "__main__":
