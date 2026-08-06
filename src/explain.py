@@ -1,52 +1,11 @@
-"""
-Explainability for the fine-tuned EDOS classifiers: LIME (primary), SHAP
-(comparative attribution + bias audit), and faithfulness metrics, matching
-Section IV.E of the project proposal.
-
-  - LIME (`explain_lime`) is the primary explainability method, applied to
-    individual predictions across Tasks A, B, and C.
-  - SHAP (`explain_shap`, `bias_audit`) is applied comparatively on a
-    sample of the test set, to validate LIME's attributions and to check
-    for gender-neutral tokens receiving disproportionate attribution
-    weight, using the audit method from Muntasir & Noor (2024), which
-    uncovers gender bias invisible to standard accuracy/F1 metrics.
-    `bias_control_comparison` supplies the missing baseline: a bootstrap
-    comparison of gender-term attribution against ordinary content-word
-    attribution, so "disproportionate" is a p-value, not just a ranking.
-  - Faithfulness (`comprehensiveness`, `sufficiency`, `evaluate_faithfulness`)
-    implements the ERASER-style metrics (DeYoung et al., 2020) cited via
-    Bang et al. (2022): comprehensiveness measures how much confidence
-    drops when the top-k explained tokens are removed (higher = more
-    faithful explanation); sufficiency measures how much confidence drops
-    when ONLY the top-k tokens are kept (lower = more faithful).
-  - `copy_best_checkpoints` restores only the best checkpoint per
-    (task, model) from a Drive backup, skipping sweep/augmented runs.
-
-Usage:
-    python -m src.explain --task A --checkpoint outputs/best_model_taskA_roberta-base
-    python -m src.explain --task C --checkpoint outputs/best_model_taskC_roberta-base --n_samples 30
-
-Note: this module needs torch/transformers/lime/shap installed and a
-fine-tuned checkpoint produced by src/train.py. Run this after training,
-on a machine with those packages installed (Colab or wherever training
-ran). The SHAP `Explanation.values`/`.data` shape used in `bias_audit`
-matches recent shap versions (Text masker + output_names); if you're on an
-older shap release, sanity-check the shapes before trusting the audit
-output.
-"""
-
 from __future__ import annotations
 
 import numpy as np
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from src.data import TASK_LABELS
-
-
 class ModelWrapper:
-    """Wraps a fine-tuned checkpoint with a predict_proba(texts) -> np.ndarray
-    interface, the shape both LIME and SHAP expect."""
+    """predict_proba(texts) -> np.ndarray, the interface LIME/SHAP expect."""
 
     def __init__(self, checkpoint_dir: str, device=None, max_length: int = 128):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -71,24 +30,13 @@ class ModelWrapper:
                 probs.append(torch.softmax(logits, dim=-1).cpu().numpy())
         return np.concatenate(probs, axis=0)
 
-
-# ---------------------------------------------------------------------------
-# Checkpoint selection
-# ---------------------------------------------------------------------------
-
 def copy_best_checkpoints(
     backup_dir: str,
     output_dir: str = "outputs",
     tasks=("A", "B", "C"),
     models=("roberta-base", "bert-base-uncased"),
 ):
-    """Copies only the best checkpoint per (task, model) from backup_dir
-    into output_dir: the run with run_name == "default" and
-    augment == "none" in its results.json (ties broken by dev_macro_f1).
-    Skips sweep runs and Task B's augmented variants.
-
-    Returns: dict {(task, model): {"dir": ..., "dev_macro_f1": ...}}
-    """
+    """Copies the best default-run checkpoint per (task, model) into output_dir."""
     import glob
     import json
     import os
@@ -124,15 +72,8 @@ def copy_best_checkpoints(
 
     return candidates
 
-
-# ---------------------------------------------------------------------------
-# LIME
-# ---------------------------------------------------------------------------
-
 def explain_lime(text: str, wrapper: ModelWrapper, labels, num_features: int = 10, num_samples: int = 500, seed: int = 42):
-    """Returns (lime Explanation object, predicted_class_index). Use
-    exp.as_list(label=predicted_class_index) to get (token, weight) pairs,
-    or exp.as_html() / exp.show_in_notebook() for a visual rendering."""
+    """Returns (lime Explanation, predicted_class_index)."""
     from lime.lime_text import LimeTextExplainer
 
     explainer = LimeTextExplainer(class_names=labels, random_state=seed)
@@ -146,11 +87,6 @@ def explain_lime(text: str, wrapper: ModelWrapper, labels, num_features: int = 1
     )
     return exp, pred_class
 
-
-# ---------------------------------------------------------------------------
-# SHAP
-# ---------------------------------------------------------------------------
-
 def build_shap_explainer(wrapper: ModelWrapper, labels):
     import shap
 
@@ -163,54 +99,34 @@ def build_shap_explainer(wrapper: ModelWrapper, labels):
 
 
 def explain_shap(texts, shap_explainer):
-    """Returns a shap.Explanation over the given texts."""
     return shap_explainer(list(texts))
-
-
-# ---------------------------------------------------------------------------
-# Faithfulness metrics (ERASER-style: DeYoung et al., 2020)
-# ---------------------------------------------------------------------------
 
 def _remove_tokens(text: str, remove_indices) -> str:
     words = text.split()
     return " ".join(w for i, w in enumerate(words) if i not in remove_indices)
 
-
 def _keep_only_tokens(text: str, keep_indices) -> str:
     words = text.split()
     return " ".join(w for i, w in enumerate(words) if i in keep_indices)
 
-
 def top_k_word_indices(word_weights, k: int) -> set:
-    """word_weights: iterable of (word_index, weight). Returns the k word
-    indices with the largest absolute weight."""
+    """word_weights: (word_index, weight) pairs. Returns the k indices with largest |weight|."""
     ranked = sorted(word_weights, key=lambda x: abs(x[1]), reverse=True)
     return {idx for idx, _ in ranked[:k]}
 
-
 def comprehensiveness(text: str, top_k_indices, wrapper: ModelWrapper, target_class: int) -> float:
-    """p(y|full text) - p(y|text with top-k explained tokens removed).
-    Higher is better: if the explanation correctly identified the
-    influential words, removing them should reduce confidence a lot."""
+    """Higher = more faithful."""
     full_p = wrapper.predict_proba([text])[0][target_class]
     reduced_p = wrapper.predict_proba([_remove_tokens(text, top_k_indices)])[0][target_class]
     return float(full_p - reduced_p)
 
-
 def sufficiency(text: str, top_k_indices, wrapper: ModelWrapper, target_class: int) -> float:
-    """p(y|full text) - p(y|only the top-k explained tokens).
-    Lower is better: if the explanation is sufficient, keeping only those
-    words should roughly reproduce the original prediction confidence."""
+    """Lower = more faithful."""
     full_p = wrapper.predict_proba([text])[0][target_class]
     kept_p = wrapper.predict_proba([_keep_only_tokens(text, top_k_indices)])[0][target_class]
     return float(full_p - kept_p)
 
-
 def evaluate_faithfulness(texts, wrapper: ModelWrapper, labels, k: int = 5, num_lime_samples: int = 300):
-    """Runs LIME on each text, then scores the resulting explanation with
-    comprehensiveness and sufficiency using its top-k tokens. Returns a
-    list of per-example dicts; average the 'comprehensiveness' and
-    'sufficiency' fields for a summary faithfulness score per model/task."""
     results = []
     for text in texts:
         exp, pred_class = explain_lime(text, wrapper, labels, num_samples=num_lime_samples)
@@ -229,28 +145,16 @@ def evaluate_faithfulness(texts, wrapper: ModelWrapper, labels, k: int = 5, num_
         )
     return results
 
-
-# ---------------------------------------------------------------------------
-# Task C bias audit: do gender-neutral terms receive
-# disproportionate SHAP attribution, independent of actual sexist content?
-# ---------------------------------------------------------------------------
-
-# Gender-related but not inherently sexist in isolation. A faithful
-# classifier should not assign these large attribution on their own. High
-# attribution here suggests the model has learned a spurious gender to
-# sexism correlation rather than genuine sexist content.
+# Gender-related but not inherently sexist in isolation; high SHAP attribution
+# here suggests a spurious gender-to-sexism correlation rather than genuine
+# sexist content.
 GENDER_NEUTRAL_TERMS = [
     "woman", "women", "girl", "girls", "she", "her", "hers",
     "man", "men", "boy", "boys", "he", "him", "his",
     "wife", "husband", "mother", "father", "female", "male",
 ]
 
-
 def bias_audit(texts, shap_values, terms=GENDER_NEUTRAL_TERMS):
-    """Aggregates mean absolute SHAP attribution per gender-neutral term
-    across a shap.Explanation (from explain_shap). Sort the returned rows
-    by mean_abs_shap descending; terms near the top are candidates for
-    the qualitative bias discussion in the write-up."""
     term_scores = {t: [] for t in terms}
     for i, _ in enumerate(texts):
         words = shap_values.data[i]
@@ -274,11 +178,8 @@ def bias_audit(texts, shap_values, terms=GENDER_NEUTRAL_TERMS):
     rows.sort(key=lambda r: r["mean_abs_shap"], reverse=True)
     return rows
 
-
-# Short function words excluded from the control pool below -- these carry
-# almost no semantic content on their own, so including them would understate
-# the "ordinary token" baseline and bias the comparison in favor of finding
-# a gender effect.
+# Excluded from the control pool: near-zero semantic content, would understate
+# the "ordinary token" baseline.
 _CONTROL_STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "am",
     "to", "of", "in", "on", "at", "by", "for", "with", "as", "it", "its",
@@ -286,24 +187,8 @@ _CONTROL_STOPWORDS = {
     "and", "or", "but", "so", "if", "not", "no", "do", "does", "did",
 }
 
-
 def bias_control_comparison(texts, shap_values, terms=GENDER_NEUTRAL_TERMS, seed=42, n_bootstrap=2000):
-    """The missing baseline for `bias_audit`: a ranked list of gender-term
-    attributions shows those terms get *some* weight, but not whether that
-    weight is disproportionate relative to an ordinary token. This compares
-    the mean |SHAP| of `terms` against a bootstrap-resampled control pool of
-    every other content word seen in `texts` (stopwords and punctuation-only
-    tokens excluded), matched to the same sample size as the gender-term
-    observations on each bootstrap draw.
-
-    Returns a dict with gender_mean_abs_shap, control_mean_abs_shap, their
-    difference, a 95% bootstrap CI for the control mean, and
-    p_value_gender_not_higher: the fraction of bootstrap control-sample means
-    that meet or exceed the observed gender-term mean. A small p-value here
-    is the actual evidence for "gender-neutral terms receive disproportionate
-    attribution," not just their raw ranking. Returns None if either the
-    gender-term or control pool is empty for this sample.
-    """
+    """Bootstraps gender-term mean |SHAP| against a control-token pool; returns None if either pool is empty."""
     rng = np.random.default_rng(seed)
     gender_scores, control_pool = [], []
     for i, _ in enumerate(texts):
@@ -340,66 +225,3 @@ def bias_control_comparison(texts, shap_values, terms=GENDER_NEUTRAL_TERMS, seed
         "control_bootstrap_ci95": (float(ci_low), float(ci_high)),
         "p_value_gender_not_higher": float((boot_means >= gender_mean).mean()),
     }
-
-
-# ---------------------------------------------------------------------------
-# CLI: explain a sample of the test set for one task/checkpoint
-# ---------------------------------------------------------------------------
-
-def main():
-    import argparse
-
-    from src.data import build_task_frame, get_splits, load_raw
-
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--task", choices=["A", "B", "C"], default="A")
-    parser.add_argument("--checkpoint", required=True, help="e.g. outputs/best_model_taskA_roberta-base")
-    parser.add_argument("--data_path", default="data/edos_labelled_aggregated.csv")
-    parser.add_argument("--n_samples", type=int, default=20, help="test examples to explain/audit")
-    parser.add_argument("--top_k", type=int, default=5, help="top-k tokens for faithfulness metrics")
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
-    labels = TASK_LABELS[args.task]
-    wrapper = ModelWrapper(args.checkpoint)
-
-    df = load_raw(args.data_path)
-    task_df = build_task_frame(df, args.task)
-    _, _, test_df = get_splits(task_df)
-    sample = test_df.sample(n=min(args.n_samples, len(test_df)), random_state=args.seed)
-    sample_texts = sample["text"].tolist()
-
-    print("=== LIME explanations (first 3 examples) ===")
-    for text in sample_texts[:3]:
-        exp, pred_class = explain_lime(text, wrapper, labels)
-        print(f"\nText: {text}")
-        print(f"Predicted: {labels[pred_class]}")
-        print("Top tokens:", exp.as_list(label=pred_class))
-
-    print(f"\n=== Faithfulness metrics (n={len(sample_texts)}, k={args.top_k}) ===")
-    results = evaluate_faithfulness(sample_texts, wrapper, labels, k=args.top_k)
-    comp = float(np.mean([r["comprehensiveness"] for r in results]))
-    suff = float(np.mean([r["sufficiency"] for r in results]))
-    print(f"Mean comprehensiveness: {comp:.4f} (higher = more faithful)")
-    print(f"Mean sufficiency:       {suff:.4f} (lower = more faithful)")
-
-    if args.task == "C":
-        print("\n=== Task C bias audit (gender-neutral term attribution) ===")
-        shap_explainer = build_shap_explainer(wrapper, labels)
-        shap_values = explain_shap(sample_texts, shap_explainer)
-        rows = bias_audit(sample_texts, shap_values)
-        for r in rows[:10]:
-            print(r)
-
-        control = bias_control_comparison(sample_texts, shap_values, seed=args.seed)
-        if control:
-            print("\n--- Bias audit control comparison ---")
-            print(f"Gender-term mean |SHAP|:  {control['gender_mean_abs_shap']:.4f} (n={control['gender_n']})")
-            print(f"Control-token mean |SHAP|: {control['control_mean_abs_shap']:.4f} (n={control['control_n']})")
-            print(f"Observed difference:      {control['observed_diff']:.4f}")
-            print(f"Control 95% bootstrap CI: {control['control_bootstrap_ci95']}")
-            print(f"p-value (gender not higher than control): {control['p_value_gender_not_higher']:.4f}")
-
-
-if __name__ == "__main__":
-    main()
