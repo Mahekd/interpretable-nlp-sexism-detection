@@ -2,27 +2,6 @@
 
 MSc capstone project on interpretable NLP for online sexism detection, using the SemEval-2023 EDOS benchmark. Fine-tunes BERT and RoBERTa across all three EDOS tasks, then applies LIME as the primary explainability method and SHAP for comparative validation and a bias audit.
 
-## Repo structure
-
-```
-.
-├── data/                          # EDOS dataset
-│   ├── edos_labelled_aggregated.csv
-│   └── edos_labelled_individual_annotations.csv
-├── notebooks/
-│   ├── 01_eda_preprocessing.ipynb 
-│   ├── 02_training.ipynb       
-│   ├── 03_explainability.ipynb 
-│   └── 04_results_summary.ipynb   
-├── src/
-│   ├── data.py                    
-│   ├── train.py               
-│   └── explain.py                
-├── outputs/                    
-├── requirements.txt
-└── .gitignore
-```
-
 ## Pipeline
 
 | Step | Notebook 
