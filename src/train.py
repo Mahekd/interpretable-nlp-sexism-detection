@@ -1,35 +1,10 @@
-"""
-Fine-tuneing a transformer encoders on an EDOS subtask (A, B, or C).
-
-Default hyperparameters follow standard practice for RoBERTa-base classification fine-tuning, consistent with the ranges reported in the
-EDOS literature:
-  - AdamW, lr=2e-5, weight_decay=0.01, linear warmup (ratio 0.06)
-  - batch_size=16, max_length=128 (EDOS posts average ~23 words)
-  - Early stopping on dev macro-F1 (the official EDOS metric), patience=3
-  - Class-weighted CrossEntropyLoss by default, to address label imbalance
-    (disable with --no_class_weights)
-
-Works with both BERT and RoBERTa checkpoints, and any other AutoModelForSequenceClassification-compatible model, just change
---model_name, e.g. bert-base-uncased or roberta-base.
-
-RoBERTa-large was used in several published EDOS systems (for example lr=6e-6, 30 epochs, see the ACL-2025 DDA/CSE ensemble paper), but a
-base-sized model is the better starting point for this project: it is far cheaper to run LIME/SHAP over (which needs hundreds of forward passes per
-explanation) and is faster to iterate on. Swap --model_name to scale up later.
-
-Usage:
-    python -m src.train --task A --model_name roberta-base
-    python -m src.train --task A --model_name bert-base-uncased
-    python -m src.train --task B --model_name roberta-large --lr 6e-6 --epochs 30
-
-"""
+"""Fine-tune a transformer encoder (BERT/RoBERTa) on an EDOS subtask (A, B, or C)."""
 
 from __future__ import annotations
-
 import argparse
 import json
 import os
 import random
-
 import numpy as np
 import torch
 from sklearn.metrics import classification_report, f1_score
@@ -50,13 +25,11 @@ from src.data import (
     load_raw,
 )
 
-
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
 
 def evaluate(model, loader, device):
     model.eval()
@@ -70,7 +43,6 @@ def evaluate(model, loader, device):
             labels.extend(gold.cpu().tolist())
     macro_f1 = f1_score(labels, preds, average="macro")
     return macro_f1, preds, labels
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -86,33 +58,11 @@ def main():
     parser.add_argument("--warmup_ratio", type=float, default=0.06)
     parser.add_argument("--patience", type=int, default=3, help="early stopping patience, in epochs")
     parser.add_argument("--no_class_weights", action="store_true")
-    parser.add_argument(
-        "--augment",
-        choices=["none", "backtranslate"],
-        default="none",
-        help="optional train-split-only back-translation augmentation (see src/augment.py); off by default per proposal Section IV.B",
-    )
-    parser.add_argument(
-        "--augment_classes",
-        default=None,
-        help="comma-separated label ids to augment, e.g. '0,3'. If --augment is set but this is omitted, "
-        "auto-selects classes with below-median training-set frequency.",
-    )
-    parser.add_argument(
-        "--pivot_lang",
-        default="nl",
-        help="pivot language for --augment backtranslate (default: nl/Dutch, per Hadi et al. 2024). "
-        "Try 'fr' (French) if the Dutch MarianMT models are slow or fail to download.",
-    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--run_name",
         default=None,
-        help="optional tag for hyperparameter-sweep runs, e.g. --run_name lr2e-5. "
-        "Keeps this run's checkpoint and results.json in its own folder "
-        "(outputs/best_model_task{A,B,C}_<model>_<run_name>/) instead of overwriting "
-        "the default outputs/best_model_task{A,B,C}_<model>/. Leave unset for your "
-        "main, final run per task/model.",
+        help="tag for sweep runs; keeps checkpoint/results.json in their own folder instead of overwriting the default one",
     )
     args = parser.parse_args()
 
@@ -127,20 +77,6 @@ def main():
     task_df = build_task_frame(df, args.task)
     train_df, dev_df, test_df = get_splits(task_df)
     print(f"Task {args.task}: train={len(train_df)} dev={len(dev_df)} test={len(test_df)} | labels={labels}")
-
-    if args.augment == "backtranslate":
-        from src.augment import back_translate
-
-        if args.augment_classes:
-            target_classes = [int(c) for c in args.augment_classes.split(",")]
-        else:
-            counts = train_df["label_id"].value_counts()
-            target_classes = counts[counts < counts.median()].index.tolist()
-        print(f"Augmenting classes {target_classes} with back-translation (train split only)")
-        train_df = back_translate(
-            train_df, target_classes, pivot_lang=args.pivot_lang, device=str(device)
-        )
-        print(f"Train size after augmentation: {len(train_df)}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -216,14 +152,10 @@ def main():
     report_dict = classification_report(gold, preds, target_names=labels, digits=3, output_dict=True)
     print(classification_report(gold, preds, target_names=labels, digits=3))
 
-    # Saved alongside the checkpoint so notebooks/04_results_summary.ipynb can
-    # consolidate every run into one comparison table without re-running eval.
     results = {
         "task": args.task,
         "model_name": args.model_name,
         "run_name": args.run_name or "default",
-        "augment": args.augment,
-        "pivot_lang": args.pivot_lang if args.augment == "backtranslate" else None,
         "lr": args.lr,
         "batch_size": args.batch_size,
         "weight_decay": args.weight_decay,
@@ -237,7 +169,6 @@ def main():
     with open(os.path.join(run_dir, "results.json"), "w") as f:
         json.dump(results, f, indent=2)
     print(f"Saved results to {os.path.join(run_dir, 'results.json')}")
-
 
 if __name__ == "__main__":
     main()
