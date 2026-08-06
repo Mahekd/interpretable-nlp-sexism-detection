@@ -1,19 +1,11 @@
-"""
-Data loading and preprocessing utilities for the EDOS sexism detection dataset.
+"""Data loading and preprocessing for the EDOS sexism detection dataset.
 
-Preprocessing choices follow a minimal preprocessing approach appropriate for fine-tuning transformer encoders 
-(RoBERTa/BERT/DeBERTa), as opposed to the heavier classical-NLP pipeline (lowercasing, lemmatization, stopword removal)
-
-  - No lowercasing / lemmatization / stopword removal. The model's own subword tokenizer handles morphology, and RoBERTa's tokenizer is case-sensitive, 
-  so lowercasing throws away information the model could otherwise use (and it also hurts LIME/SHAP explanations, which shouldexplain the model on text it actually sees).
-  
-  - URLs and usernames are already normalized to [URL] / [USER] tokens by the dataset creators (Kirk et al., SemEval-2023 Task 10), so no further cleaning is applied there.
-    
-  - Emojis and punctuation are kept, since they carry sentiment signal relevant to sexism/hate-speech detection.
+No lowercasing, lemmatization, or stopword removal - the tokenizer handles
+morphology and LIME/SHAP need to see the text the model actually sees.
+URLs/usernames are already normalized to [URL]/[USER] by the dataset.
 """
 
 from __future__ import annotations
-
 import numpy as np
 import pandas as pd
 import torch
@@ -42,13 +34,10 @@ TASK_LABELS = {
         "4.2 supporting systemic discrimination against women as a group",
     ],
 }
-
 LABEL_COLUMNS = {"A": "label_sexist", "B": "label_category", "C": "label_vector"}
 
-
 def load_raw(csv_path: str) -> pd.DataFrame:
-    """Load the aggregated EDOS CSV (rewire_id, text, label_sexist,
-    label_category, label_vector, split)."""
+    """Load the aggregated EDOS CSV."""
     df = pd.read_csv(csv_path)
     required = {"text", "label_sexist", "label_category", "label_vector", "split"}
     missing = required - set(df.columns)
@@ -56,15 +45,8 @@ def load_raw(csv_path: str) -> pd.DataFrame:
         raise ValueError(f"Missing expected columns: {missing}")
     return df
 
-
 def build_task_frame(df: pd.DataFrame, task: str) -> pd.DataFrame:
-    """
-    Slice the full dataframe down to the rows and label column relevant to a given EDOS subtask, matching the official task definitions:
-      - Task A (binary, 2-way):  all rows, sexist vs not sexist.
-      - Task B (category, 4-way): only rows where label_sexist == 'sexist'.
-      - Task C (vector, 11-way):  only rows where label_sexist == 'sexist'.
-    Returns a frame with columns [text, label_id, split].
-    """
+    """Sliced the dataframe to the rows/label column for a given task (A/B/C). Returned the columns [text, label_id, split]."""
     if task not in TASK_LABELS:
         raise ValueError(f"task must be one of {list(TASK_LABELS)}, got {task!r}")
 
@@ -80,28 +62,24 @@ def build_task_frame(df: pd.DataFrame, task: str) -> pd.DataFrame:
     out["label_id"] = out[label_col].map(label2id).astype(int)
     return out[["text", "label_id", "split"]].reset_index(drop=True)
 
-
 def get_splits(task_df: pd.DataFrame):
-    """Use the dataset's own train/dev/test split (14000/2000/4000 rows in the full aggregated file) rather than re-shuffling, so results stay 
-    comparable to the SemEval-2023 Task 10 leaderboard."""
+    """Return the official train/dev/test split."""
     train = task_df[task_df["split"] == "train"].reset_index(drop=True)
     dev = task_df[task_df["split"] == "dev"].reset_index(drop=True)
     test = task_df[task_df["split"] == "test"].reset_index(drop=True)
     return train, dev, test
 
 def compute_weights(train_df: pd.DataFrame, num_labels: int) -> torch.Tensor:
-    """Inverse-frequency class weights for a weighted CrossEntropyLoss, to address the class imbalance documented across the EDOS literature (e.g.
-    Task A is ~76/24 not-sexist/sexist; Task C's smallest class has under 100 training examples)."""
+    """Inverse-frequency class weights for weighted CrossEntropyLoss."""
     classes = np.arange(num_labels)
     weights = compute_class_weight(
         class_weight="balanced", classes=classes, y=train_df["label_id"].values
     )
     return torch.tensor(weights, dtype=torch.float)
 
-
 class SexismDataset(Dataset):
-    """Tokenizes text on the fly. max_length=128 comfortably covers this dataset (EDOS posts average ~23 words, max ~58 words), well under the
-    512-token budgets used in prior work, which reduces training/inference time without truncating any real posts."""
+    """Tokenizes text on the fly. max_length=128 covers the dataset comfortably
+    (posts average ~23 words, max ~58)."""
 
     def __init__(self, texts, labels, tokenizer, max_length: int = 128):
         self.texts = list(texts)
