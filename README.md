@@ -9,7 +9,6 @@ MSc capstone project on interpretable NLP for online sexism detection, using the
 | 1. EDA and preprocessing | `01_eda_preprocessing.ipynb` 
 | 2. Training | `02_training.ipynb`
 | 3. Explainability | `03_explainability.ipynb` 
-| 4. Results summary | `04_results_summary.ipynb`
 
 1. EDA and preprocessing. Class distributions, text length, annotator agreement, and label imbalance across Tasks A, B, and C. Also demonstrates the preprocessing used everywhere else: text stays case-preserved with no lemmatization or stopword removal, and `[URL]`/`[USER]` tokens are kept as-is.
 
