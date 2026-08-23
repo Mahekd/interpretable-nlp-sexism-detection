@@ -1,24 +1,9 @@
-"""
-Optional data augmentation can be done for the minority classes in Tasks B and C.
-
-back_translate: round-trip translation through a pivot language (English to Dutch to English by default), following Hadi et al.(2024), 
-who found Dutch worked well for this dataset because of its lexical closeness to English. This needs MarianMT models downloaded on first use (pip install sentencepiece sacremoses).
-
-Recommendation: starting without augmentation and relying on class-weighted loss alone (see src/train.py) for Task A. Save augmentation for Task B and C,where several 
-classes have under 150 training examples and class weighting alone tends to make the loss noisy.
-
-For something more powerful, though heavier, look at the ACL-2025 EDOS paper's Definition-based Data Augmentation / Contextual Semantic Expansion, 
-which prompts an LLM with the taxonomy's own category definitions to generate synthetic minority-class examples. Not
-implemented here since it needs LLM API access, but worth trying if EDA and back-translation are not enough on their own.
-"""
+""" Optional data augmentation can be done for the minority classes in Tasks B and C. """
 
 from __future__ import annotations
-
 from typing import List
- 
 import pandas as pd
 from transformers import MarianMTModel, MarianTokenizer
- 
  
 def back_translate(
     df: pd.DataFrame,

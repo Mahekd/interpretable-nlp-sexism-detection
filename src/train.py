@@ -1,4 +1,4 @@
-"""Fine-tune a transformer encoder (BERT/RoBERTa) on an EDOS subtask (A, B, or C)."""
+"""Fine-tuneing a transformer encoder (BERT/RoBERTa) on an EDOS subtask (A, B, or C)."""
 
 from __future__ import annotations
 import argparse

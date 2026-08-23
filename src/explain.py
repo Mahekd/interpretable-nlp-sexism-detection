@@ -97,7 +97,6 @@ def build_shap_explainer(wrapper: ModelWrapper, labels):
 
     return shap.Explainer(f, masker, output_names=labels)
 
-
 def explain_shap(texts, shap_explainer):
     return shap_explainer(list(texts))
 

@@ -1,9 +1,4 @@
-"""Data loading and preprocessing for the EDOS sexism detection dataset.
-
-No lowercasing, lemmatization, or stopword removal - the tokenizer handles
-morphology and LIME/SHAP need to see the text the model actually sees.
-URLs/usernames are already normalized to [URL]/[USER] by the dataset.
-"""
+"""Data loading and preprocessing for the EDOS sexism detection dataset."""
 
 from __future__ import annotations
 import numpy as np
@@ -37,7 +32,7 @@ TASK_LABELS = {
 LABEL_COLUMNS = {"A": "label_sexist", "B": "label_category", "C": "label_vector"}
 
 def load_raw(csv_path: str) -> pd.DataFrame:
-    """Load the aggregated EDOS CSV."""
+    """Loading the aggregated EDOS CSV."""
     df = pd.read_csv(csv_path)
     required = {"text", "label_sexist", "label_category", "label_vector", "split"}
     missing = required - set(df.columns)
